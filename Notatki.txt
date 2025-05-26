@@ -7,3 +7,6 @@ https://www.sciencedirect.com/science/article/abs/pii/S0010482517303153?casa_tok
 DATASET:
 
 https://www.kaggle.com/datasets/aymanmostafa11/eeg-motor-imagery-bciciv-2a
+
+Neural network tools:
+https://github.com/braindecode/braindecode/tree/master
