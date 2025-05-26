@@ -2,3 +2,8 @@
 Link (CNN w Matlab):
 
 https://www.sciencedirect.com/science/article/abs/pii/S0010482517303153?casa_token=bnSGqkDaETcAAAAA:O12VLQIEDIkt14_LlSUM7AcHGAqVK4Ltgpzct1Ca2Oe8yFY_2pkB2u4Wc0tgNANvhhI3At1cGY8
+
+
+DATASET:
+
+https://www.kaggle.com/datasets/aymanmostafa11/eeg-motor-imagery-bciciv-2a
