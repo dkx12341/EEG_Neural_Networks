@@ -1,4 +1,5 @@
 # EEG_Neural_Networks
 
-Repository for university project for Biologicaly Inspired Artificial Inteligence course.
+University project for Biologicaly Inspired Artificial Inteligence course.
 
+Consists of three different neural networks, made for classification of EEG data.
