@@ -172,3 +172,6 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+EEG_Conformer/braindecode_env/
+EEG_Conformer/lightning_logs/
