@@ -120,7 +120,7 @@ weight_decay = 0
 
 batch_size = 64
 #n_epochs = 2
-n_epochs = 6
+n_epochs = 35
 clf = EEGClassifier(
     model,
     cropped=True,
@@ -150,46 +150,144 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.lines import Line2D
 
-# Extract loss and accuracy values
+# # Extract loss and accuracy values
+# results_columns = ["train_loss", "valid_loss", "train_accuracy", "valid_accuracy"]
+# df = pd.DataFrame(
+#     clf.history[:, results_columns],
+#     columns=results_columns,
+#     index=clf.history[:, "epoch"],
+# )
+
+# df = df.assign(
+#     train_misclass=100 - 100 * df.train_accuracy,
+#     valid_misclass=100 - 100 * df.valid_accuracy,
+# )
+
+# fig, ax1 = plt.subplots(figsize=(8, 3))
+# df.loc[:, ["train_loss", "valid_loss"]].plot(
+#     ax=ax1, style=["-", ":"], marker="o", color="tab:blue", legend=False, fontsize=14
+# )
+
+# ax1.tick_params(axis="y", labelcolor="tab:blue", labelsize=14)
+# ax1.set_ylabel("Loss", color="tab:blue", fontsize=14)
+
+# ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+
+# df.loc[:, ["train_misclass", "valid_misclass"]].plot(
+#     ax=ax2, style=["-", ":"], marker="o", color="tab:red", legend=False
+# )
+# ax2.tick_params(axis="y", labelcolor="tab:red", labelsize=14)
+# ax2.set_ylabel("Misclassification Rate [%]", color="tab:red", fontsize=14)
+# ax2.set_ylim(ax2.get_ylim()[0], 85)  # make some room for legend
+# ax1.set_xlabel("Epoch", fontsize=14)
+
+# # where some data has already been plotted to ax
+# handles = []
+# handles.append(
+#     Line2D([0], [0], color="black", linewidth=1, linestyle="-", label="Train")
+# )
+# handles.append(
+#     Line2D([0], [0], color="black", linewidth=1, linestyle=":", label="Valid")
+# )
+# plt.legend(handles, [h.get_label() for h in handles], fontsize=14)
+# plt.tight_layout()
+
+
+
+
+# # Accuracy Plot
+# epochs_range = range(1, n_epochs + 1)
+# plt.figure()
+# plt.plot(epochs_range, history["train_acc"], label="Train Accuracy")
+# plt.plot(epochs_range, history["test_acc"], label="Test Accuracy")
+# plt.xlabel("Epoch")
+# plt.ylabel("Accuracy")
+# plt.title("Accuracy over Epochs")
+# plt.legend()
+# plt.grid(True)
+# plt.show()
+
+# # Loss Plot
+# plt.figure()
+# plt.plot(epochs_range, history["train_loss"], label="Train Loss")
+# plt.plot(epochs_range, history["test_loss"], label="Test Loss")
+# plt.xlabel("Epoch")
+# plt.ylabel("Loss")
+# plt.title("Loss over Epochs")
+# plt.legend()
+# plt.grid(True)
+# plt.show()
+
+import pandas as pd
+
+# Extract relevant metrics from clf.history
 results_columns = ["train_loss", "valid_loss", "train_accuracy", "valid_accuracy"]
+
 df = pd.DataFrame(
     clf.history[:, results_columns],
     columns=results_columns,
     index=clf.history[:, "epoch"],
 )
 
-df = df.assign(
-    train_misclass=100 - 100 * df.train_accuracy,
-    valid_misclass=100 - 100 * df.valid_accuracy,
-)
+# Also compute misclassification rate if desired
+df["train_misclass"] = 100 - df["train_accuracy"] * 100
+df["valid_misclass"] = 100 - df["valid_accuracy"] * 100
 
-fig, ax1 = plt.subplots(figsize=(8, 3))
-df.loc[:, ["train_loss", "valid_loss"]].plot(
-    ax=ax1, style=["-", ":"], marker="o", color="tab:blue", legend=False, fontsize=14
-)
 
-ax1.tick_params(axis="y", labelcolor="tab:blue", labelsize=14)
-ax1.set_ylabel("Loss", color="tab:blue", fontsize=14)
+import matplotlib.pyplot as plt
 
-ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+epochs_range = df.index  # or: range(1, n_epochs + 1)
 
-df.loc[:, ["train_misclass", "valid_misclass"]].plot(
-    ax=ax2, style=["-", ":"], marker="o", color="tab:red", legend=False
-)
-ax2.tick_params(axis="y", labelcolor="tab:red", labelsize=14)
-ax2.set_ylabel("Misclassification Rate [%]", color="tab:red", fontsize=14)
-ax2.set_ylim(ax2.get_ylim()[0], 85)  # make some room for legend
-ax1.set_xlabel("Epoch", fontsize=14)
-
-# where some data has already been plotted to ax
-handles = []
-handles.append(
-    Line2D([0], [0], color="black", linewidth=1, linestyle="-", label="Train")
-)
-handles.append(
-    Line2D([0], [0], color="black", linewidth=1, linestyle=":", label="Valid")
-)
-plt.legend(handles, [h.get_label() for h in handles], fontsize=14)
+# Accuracy Plot
+plt.figure(figsize=(8, 3))
+plt.plot(epochs_range, df["train_accuracy"], label="Train Accuracy", marker='o', linestyle='-')
+plt.plot(epochs_range, df["valid_accuracy"], label="Valid Accuracy", marker='o', linestyle=':')
+plt.xlabel("Epoch", fontsize=14)
+plt.ylabel("Accuracy", fontsize=14)
+plt.title("Accuracy over Epochs", fontsize=14)
+plt.legend(fontsize=14)
+plt.grid(True)
 plt.tight_layout()
+plt.show()
+
+# Loss Plot
+plt.figure(figsize=(8, 3))
+plt.plot(epochs_range, df["train_loss"], label="Train Loss", marker='o', linestyle='-')
+plt.plot(epochs_range, df["valid_loss"], label="Valid Loss", marker='o', linestyle=':')
+plt.xlabel("Epoch", fontsize=14)
+plt.ylabel("Loss", fontsize=14)
+plt.title("Loss over Epochs", fontsize=14)
+plt.legend(fontsize=14)
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+
+
+
+
+
+from sklearn.metrics import confusion_matrix
+
+from braindecode.visualization import plot_confusion_matrix
+
+# generate confusion matrices
+# get the targets
+y_true = valid_set.get_metadata().target
+y_pred = clf.predict(valid_set)
+
+# generating confusion matrix
+confusion_mat = confusion_matrix(y_true, y_pred)
+
+# add class labels
+# label_dict is class_name : str -> i_class : int
+label_dict = windows_dataset.datasets[0].window_kwargs[0][1]["mapping"]
+# sort the labels by values (values are integer class labels)
+labels = [k for k, v in sorted(label_dict.items(), key=lambda kv: kv[1])]
+
+# plot the basic conf. matrix
+plot_confusion_matrix(confusion_mat, class_names=labels)
+plt.plot()
+
 
 print("a")
