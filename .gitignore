@@ -175,3 +175,4 @@ cython_debug/
 
 EEG_Conformer/braindecode_env/
 EEG_Conformer/lightning_logs/
+EEG_Conformer/main_with_notes.py

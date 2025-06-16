@@ -1,50 +1,49 @@
 from braindecode.datasets import MOABBDataset
-
-subject_id = 3
-dataset = MOABBDataset(dataset_name="BNCI2014_001", subject_ids=[subject_id])
-
 import numpy as np
-
 from braindecode.preprocessing import (
     Preprocessor,
     exponential_moving_standardize,
     preprocess,
 )
+from braindecode.preprocessing import create_windows_from_events
+import torch
+from braindecode.models import EEGConformer
+from braindecode.util import set_random_seeds
+from torch.nn import Module
+from torch.optim.lr_scheduler import LRScheduler
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
-low_cut_hz = 4.0    # low cut frequency for filtering
-high_cut_hz = 38.0  # high cut frequency for filtering
-                    # Parameters for exponential moving standardization
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix 
+
+
+subject_id = 3
+dataset = MOABBDataset(dataset_name="BNCI2014_001", subject_ids=[subject_id])
+
+low_cut_hz = 4.0
+high_cut_hz = 38.0
 factor_new = 1e-3
 init_block_size = 1000
 
 transforms = [
-    Preprocessor("pick_types", eeg=True, meg=False, stim=False),  # Keep EEG sensors
+    Preprocessor("pick_types", eeg=True, meg=False, stim=False),
+    Preprocessor(lambda data, factor: np.multiply(data, factor), factor=1e6),
+    Preprocessor("filter", l_freq=low_cut_hz, h_freq=high_cut_hz),
     Preprocessor(
-        lambda data, factor: np.multiply(data, factor),  # Convert from V to uV
-        factor=1e6,
-    ),
-    Preprocessor("filter", l_freq=low_cut_hz, h_freq=high_cut_hz),  # Bandpass filter
-    Preprocessor(
-        exponential_moving_standardize,  # Exponential moving standardization
+        exponential_moving_standardize,
         factor_new=factor_new,
         init_block_size=init_block_size,
     ),
 ]
 
-# Transform the data
 preprocess(dataset, transforms, n_jobs=-1)
 
-from braindecode.preprocessing import create_windows_from_events
-
 trial_start_offset_seconds = -0.5
-# Extract sampling frequency, check that they are same in all datasets
 sfreq = dataset.datasets[0].raw.info["sfreq"]
 assert all([ds.raw.info["sfreq"] == sfreq for ds in dataset.datasets])
-# Calculate the trial start offset in samples.
 trial_start_offset_samples = int(trial_start_offset_seconds * sfreq)
 
-# Create windows using braindecode function for this. It needs parameters to define how
-# trials should be used.
 windows_dataset = create_windows_from_events(
     dataset,
     trial_start_offset_samples=trial_start_offset_samples,
@@ -52,60 +51,48 @@ windows_dataset = create_windows_from_events(
     preload=True,
 )
 
-import torch
-
-from braindecode.models import EEGConformer
-from braindecode.util import set_random_seeds
-
-cuda = torch.cuda.is_available()  # check if GPU is available, if True chooses to use it
+cuda = torch.cuda.is_available()
 device = "cuda" if cuda else "cpu"
 if cuda:
     torch.backends.cudnn.benchmark = True
+
 seed = 20200220
 set_random_seeds(seed=seed, cuda=cuda)
 
 n_classes = 4
-classes = list(range(n_classes))
-# Extract number of chans and time steps from dataset
 n_chans = windows_dataset[0][0].shape[0]
 n_times = windows_dataset[0][0].shape[1]
-
-# The ShallowFBCSPNet is a `nn.Sequential` model
 
 model = EEGConformer(
     n_outputs=n_classes,
     n_chans=n_chans,
     n_times=n_times,
-    n_filters_time=256,       # embeding size (big = increase power, slower training)
-    att_depth=4,              # attention block amount
-    att_heads=8,              # multi-head attention amount
-    drop_prob=0.1,            # dropout CNN
-    att_drop_prob=0.1,        # dropout attention
-    final_fc_length="auto"    # FC fitting
+    n_filters_time=256,
+    att_depth=4,
+    att_heads=8,
+    drop_prob=0.1,
+    att_drop_prob=0.1,
+    final_fc_length="auto"
 )
-
-print(model)
-
 
 if cuda:
     model.cuda()
 
 splitted = windows_dataset.split("session")
-train_set = splitted["0train"]  # Session train
-test_set = splitted["1test"]    # Session evaluation
-
-from torch.nn import Module
-from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import DataLoader
+train_set = splitted["0train"]
+test_set = splitted["1test"]
 
 lr = 3e-4
 weight_decay = 0
 batch_size = 16
-n_epochs = 30
+n_epochs = 5
 
-from tqdm import tqdm
+optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs - 1)
+loss_fn = torch.nn.CrossEntropyLoss()
 
-# Define a method for training one epoch
+train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
+test_loader = DataLoader(test_set, batch_size=batch_size)
 
 def train_one_epoch(
     dataloader: DataLoader,
@@ -117,9 +104,8 @@ def train_one_epoch(
     device,
     print_batch_stats=True,
 ):
-    model.train()  # Set the model to training mode
+    model.train()
     train_loss, correct = 0.0, 0.0
-
     progress_bar = tqdm(
         enumerate(dataloader), total=len(dataloader), disable=not print_batch_stats
     )
@@ -130,7 +116,7 @@ def train_one_epoch(
         pred = model(X)
         loss = loss_fn(pred, y)
         loss.backward()
-        optimizer.step()  # update the model weights
+        optimizer.step()
         optimizer.zero_grad()
 
         train_loss += loss.item()
@@ -143,9 +129,7 @@ def train_one_epoch(
                 f"Loss: {loss.item():.6f}"
             )
 
-    # Update the learning rate
     scheduler.step()
-
     correct /= len(dataloader.dataset)
     return train_loss / len(dataloader), correct
 
@@ -154,13 +138,9 @@ def train_one_epoch(
 def test_model(dataloader: DataLoader, model: Module, loss_fn, print_batch_stats=True):
     size = len(dataloader.dataset)
     n_batches = len(dataloader)
-    model.eval()  # Switch to evaluation mode
+    model.eval()
     test_loss, correct = 0.0, 0.0
-
-    if print_batch_stats:
-        progress_bar = tqdm(enumerate(dataloader), total=len(dataloader))
-    else:
-        progress_bar = enumerate(dataloader)
+    progress_bar = tqdm(enumerate(dataloader), total=n_batches) if print_batch_stats else enumerate(dataloader)
 
     for batch_idx, (X, y, _) in progress_bar:
         X, y = X.to(device), y.to(device)
@@ -181,20 +161,12 @@ def test_model(dataloader: DataLoader, model: Module, loss_fn, print_batch_stats
     print(f"Test Accuracy: {100 * correct:.1f}%, Test Loss: {test_loss:.6f}\n")
     return test_loss, correct
 
-
-# Define the optimization
-optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs - 1)
-
-# Define the loss function
-# We used the NNLoss function, which expects log probabilities as input
-# (which is the case for our model output)
-loss_fn = torch.nn.CrossEntropyLoss()
-
-# train_set and test_set are instances of torch Datasets, and can seamlessly be
-# wrapped in data loaders.
-train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
-test_loader = DataLoader(test_set, batch_size=batch_size)
+history = {
+    "train_loss": [],
+    "train_acc": [],
+    "test_loss": [],
+    "test_acc": [],
+}
 
 for epoch in range(1, n_epochs + 1):
     print(f"Epoch {epoch}/{n_epochs}: ", end="")
@@ -211,6 +183,11 @@ for epoch in range(1, n_epochs + 1):
 
     test_loss, test_accuracy = test_model(test_loader, model, loss_fn)
 
+    history["train_loss"].append(train_loss)
+    history["train_acc"].append(train_accuracy)
+    history["test_loss"].append(test_loss)
+    history["test_acc"].append(test_accuracy)
+
     print(
         f"Train Accuracy: {100 * train_accuracy:.2f}%, "
         f"Average Train Loss: {train_loss:.6f}, "
@@ -218,45 +195,49 @@ for epoch in range(1, n_epochs + 1):
         f"Average Test Loss: {test_loss:.6f}\n"
     )
 
-import lightning as L
-from torchmetrics.functional import accuracy
+# Accuracy Plot
+epochs_range = range(1, n_epochs + 1)
+plt.figure()
+plt.plot(epochs_range, history["train_acc"], label="Train Accuracy")
+plt.plot(epochs_range, history["test_acc"], label="Test Accuracy")
+plt.xlabel("Epoch")
+plt.ylabel("Accuracy")
+plt.title("Accuracy over Epochs")
+plt.legend()
+plt.grid(True)
+plt.show()
 
+# Loss Plot
+plt.figure()
+plt.plot(epochs_range, history["train_loss"], label="Train Loss")
+plt.plot(epochs_range, history["test_loss"], label="Test Loss")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.title("Loss over Epochs")
+plt.legend()
+plt.grid(True)
+plt.show()
 
-class LitModule(L.LightningModule):
-    def __init__(self, module):
-        super().__init__()
-        self.module = module
-        self.loss = torch.nn.CrossEntropyLoss()
+from sklearn.metrics import confusion_matrix
+from braindecode.visualization import plot_confusion_matrix
 
-    def training_step(self, batch, batch_idx):
-        x, y, _ = batch
-        y_hat = self.module(x)
-        loss = self.loss(y_hat, y)
-        self.log("train_loss", loss)
-        return loss
+# Confuse Matrix
+all_preds = []
+all_labels = []
 
-    def test_step(self, batch, batch_idx):
-        x, y, _ = batch
-        y_hat = self.module(x)
-        loss = self.loss(y_hat, y)
-        acc = accuracy(y_hat, y, "multiclass", num_classes=4)
-        metrics = {"test_acc": acc, "test_loss": loss}
-        self.log_dict(metrics)
-        return metrics
+model.eval()
+with torch.no_grad():
+    for X, y, _ in test_loader:
+        X = X.to(device)
+        y = y.to(device)
+        preds = model(X).argmax(dim=1)
+        all_preds.extend(preds.cpu().numpy())
+        all_labels.extend(y.cpu().numpy())
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            model.parameters(), lr=lr, weight_decay=weight_decay
-        )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=n_epochs - 1
-        )
-        return [optimizer], [scheduler]
+confusion_mat = confusion_matrix(all_labels, all_preds)
 
-trainer = L.Trainer(max_epochs=n_epochs)
+label_dict = windows_dataset.datasets[0].window_kwargs[0][1]["mapping"]
+labels = [k for k, v in sorted(label_dict.items(), key=lambda kv: kv[1])]
 
-# Create and train the LightningModule
-lit_model = LitModule(model)
-trainer.fit(lit_model, train_loader)
-
-trainer.test(dataloaders=test_loader)
+plot_confusion_matrix(confusion_mat, class_names=labels)
+plt.show()
